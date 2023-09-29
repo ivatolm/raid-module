@@ -2,10 +2,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Ivan Tolmachev");
-MODULE_DESCRIPTION("RAID module");
-
 static int __init init(void)
 {
     printk(KERN_INFO "init\n");
@@ -19,3 +15,7 @@ static void __exit exit(void)
 
 module_init(init);
 module_exit(exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Ivan Tolmachev");
+MODULE_DESCRIPTION("RAID module");
