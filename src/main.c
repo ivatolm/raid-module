@@ -8,18 +8,41 @@
 
 static struct rm_data {
 	struct gendisk *gd;
+
+	size_t disks_cnt;
+	struct block_device *disks[2];
 } rm;
+
+static void rm_submit_raid_level1(struct bio *bio)
+{
+	sector_t sector = bio->bi_iter.bi_sector;
+	sector_t size = bio->bi_iter.bi_size;
+
+	// Assuming there is at least 1 disk
+	if (bio_data_dir(bio) == READ)
+		goto submit_parent;
+
+	// Starting from the second disk, because the first one will be the parent
+	for (size_t i = 1; i < rm.disks_cnt; i++) {
+		struct bio *clone = bio_alloc_clone(rm.disks[i], bio, GFP_KERNEL, bio->bi_pool);
+		bio_chain(clone, bio);
+		submit_bio(clone);
+	}
+
+submit_parent:
+	bio_set_dev(bio, rm.disks[0]);
+	submit_bio(bio);
+}
 
 static void rm_submit_bio(struct bio *bio)
 {
-	sector_t sector, size;	
+	sector_t sector = bio->bi_iter.bi_sector;
+	sector_t size = bio->bi_iter.bi_size;
 	
-	sector = bio->bi_iter.bi_sector;
-	size = bio->bi_iter.bi_size;
-
 	pr_info("sector: %llu, size: %llu\n", sector, size);
 
-	bio_endio(bio);
+	// Processing bio request with the RAID level 1 handler
+	rm_submit_raid_level1(bio);
 }
 
 struct block_device_operations rm_ops = {
@@ -40,6 +63,11 @@ static int rm_create_device(void)
 	rm.gd->fops = &rm_ops;
 	snprintf(rm.gd->disk_name, 32, "rm_raid");
 	set_capacity(rm.gd, 1024);
+
+	// Capture from sysfs
+	rm.disks[0] = blkdev_get_by_path("/dev/sdb", FMODE_READ | FMODE_WRITE, NULL, NULL);
+	rm.disks[1] = blkdev_get_by_path("/dev/sdc", FMODE_READ | FMODE_WRITE, NULL, NULL);
+	rm.disks_cnt = 2;
 
 	int status = add_disk(rm.gd);
 
