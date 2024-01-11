@@ -6,13 +6,23 @@
 
 #define KERNEL_SECTOR_SIZE 512
 
+static int dev_cnt;
+module_param(dev_cnt, int, 0);
+
+static char *dev_names[16];
+module_param_array(dev_names, charp, NULL, 0);
+
+static int level;
+module_param(level, int, 0);
+
 static struct rm_data {
 	struct gendisk *gd;
 
 	size_t stripe_size;
+	size_t level; // TODO: Replace with enum
 
 	size_t disks_cnt;
-	struct block_device *disks[2];
+	struct block_device *disks[16];
 } rm;
 
 static void rm_submit_raid_level0(struct bio *bio)
@@ -68,7 +78,14 @@ static void rm_submit_bio(struct bio *bio)
 	pr_info("sector: %llu, size: %llu\n", sector, size / KERNEL_SECTOR_SIZE);
 
 	// Processing bio request with the RAID level 1 handler
-	rm_submit_raid_level0(bio);
+	switch (rm.level) {
+		case 0:
+			rm_submit_raid_level0(bio);
+			break;
+		case 1:
+			rm_submit_raid_level1(bio);
+			break;
+	}
 }
 
 struct block_device_operations rm_ops = {
@@ -90,12 +107,19 @@ static int rm_create_device(void)
 	snprintf(rm.gd->disk_name, 32, "rm_raid");
 	set_capacity(rm.gd, 1024);
 
-	// Capture from sysfs
-	rm.disks[0] = blkdev_get_by_path("/dev/sdb", FMODE_READ | FMODE_WRITE, NULL, NULL);
-	rm.disks[1] = blkdev_get_by_path("/dev/sdc", FMODE_READ | FMODE_WRITE, NULL, NULL);
-	rm.disks_cnt = 2;
+	rm.level = level;
+	if (level != 0 && level != 1) {
+		printk(KERN_NOTICE "invalid raid level\n");
+		return -1;
+	}
 
-	rm.stripe_size = 16 * 1024 / 512;
+	rm.disks_cnt = dev_cnt;
+	for (size_t i = 0; i < dev_cnt; i++) {
+		rm.disks[i] = blkdev_get_by_path(dev_names[i],
+				FMODE_READ | FMODE_WRITE, NULL, NULL);
+	}
+
+	rm.stripe_size = 16384 / KERNEL_SECTOR_SIZE;
 
 	int status = add_disk(rm.gd);
 
